@@ -57,6 +57,27 @@ def split_into_alert_chunks(raw_text: str) -> List[Dict]:
                 'chunk_index': i
             })
 
+    # If no timestamp-based splitting occurred (i.e., we have a single chunk
+    # containing multiple lines and none of the lines start with a timestamp),
+    # fall back to splitting by non-empty lines so each line becomes its own alert.
+    if len(alert_chunks) == 1:
+        single_text = alert_chunks[0]['raw_text']
+        lines = [ln.strip() for ln in single_text.split('\n') if ln.strip()]
+        # Check if any line looks like it starts with a timestamp
+        has_timestamp = any(re.match(r'^\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}', ln) or
+                            re.match(r'^\d{2}:\d{2}:\d{2}', ln)
+                            for ln in lines)
+        if not has_timestamp and len(lines) > 1:
+            # Re-create alert chunks, one per line
+            alert_chunks = []
+            for i, line in enumerate(lines):
+                alert_chunks.append({
+                    'alert_id': f'alert_{i}',
+                    'raw_text': line,
+                    'timestamp': None,
+                    'chunk_index': i
+                })
+
     return alert_chunks
 
 if __name__ == "__main__":
