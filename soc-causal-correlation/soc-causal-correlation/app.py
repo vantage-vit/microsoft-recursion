@@ -228,9 +228,7 @@ def get_historical_similarity(incident_id: str) -> List[Dict[str, Any]]:
                 return []
 
             similar = []
-            current_techniques = set()
-            if hasattr(current_incident, 'attack_techniques'):
-                current_techniques = set(current_incident.attack_techniques)
+            current_techniques = set(current_incident.attack_techniques) if hasattr(current_incident, 'attack_techniques') else set()
             current_entities = set()
             if hasattr(current_incident, 'participating_entities'):
                 for entity_type, values in current_incident.participating_entities.items():
@@ -242,9 +240,7 @@ def get_historical_similarity(incident_id: str) -> List[Dict[str, Any]]:
                     continue  # Skip current incident
 
                 # Simple similarity based on shared techniques or entities
-                inc_techniques = set()
-                if hasattr(inc, 'attack_techniques'):
-                    inc_techniques = set(inc.attack_techniques)
+                inc_techniques = set(inc.attack_techniques) if hasattr(inc, 'attack_techniques') else set()
                 inc_entities = set()
                 if hasattr(inc, 'participating_entities'):
                     for entity_type, values in inc.participating_entities.items():

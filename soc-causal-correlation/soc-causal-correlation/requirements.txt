@@ -1,0 +1,20 @@
+# Core dependencies
+pandas>=1.5.0
+numpy>=1.24.0
+networkx>=3.0
+scikit-learn>=1.3.0
+pydantic>=2.0.0
+anthropic>=0.7.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Optional dependencies for enhanced functionality
+python-louvain>=0.16  # For Louvain community detection
+pyvis>=0.3.2          # For graph visualization
+streamlit>=1.25.0     # For web UI (if using Streamlit frontend)
+python-dotenv>=1.0.0  # For environment variable management
+
+# For development and testing
+pytest>=7.0.0
+black>=23.0.0
+flake8>=6.0.0
