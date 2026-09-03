@@ -2,6 +2,7 @@
 Clustering: connected_components / Louvain -> incident groups
 """
 
+import hashlib
 import networkx as nx
 from typing import List, Dict, Any, Set
 try:
@@ -157,8 +158,10 @@ def summarize_incident(G: nx.Graph, incident_nodes: Set[str]) -> Dict[str, Any]:
         if node_data.get('timestamp'):
             try:
                 from datetime import datetime
-                ts = node_data['timestamp'].replace(' ', 'T')
-                dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                value = node_data['timestamp']
+                dt = value if isinstance(value, datetime) else datetime.fromisoformat(
+                    str(value).replace(' ', 'T').replace('Z', '+00:00')
+                )
                 timestamps.append(dt)
             except:
                 pass
@@ -181,7 +184,9 @@ def summarize_incident(G: nx.Graph, incident_nodes: Set[str]) -> Dict[str, Any]:
         entity_types[entity_type] = entity_types.get(entity_type, 0) + 1
 
     return {
-        'incident_id': f"incident_{hash(tuple(sorted(incident_nodes))) % 100000:05d}",
+        'incident_id': "incident_" + hashlib.sha1(
+            "|".join(sorted(incident_nodes)).encode()
+        ).hexdigest()[:10],
         'alert_count': len(alert_nodes),
         'entity_count': len(entity_nodes),
         'alerts': alerts,

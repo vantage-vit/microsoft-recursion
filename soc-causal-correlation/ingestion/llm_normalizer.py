@@ -6,7 +6,10 @@ import os
 import json
 from typing import Dict, Any, Optional
 from anthropic import Anthropic
-from ..schema import Alert
+try:
+    from ..schema import Alert
+except ImportError:
+    from schema import Alert
 
 class LLMPromptNormalizer:
     def __init__(self, api_key: Optional[str] = None):

@@ -90,10 +90,9 @@ def _calculate_temporal_scores(G: nx.Graph, alert_nodes: List[str]) -> Dict[str,
             try:
                 from datetime import datetime
                 # Handle various timestamp formats
-                ts_clean = timestamp_str.replace(' ', 'T')
-                if ts_clean.endswith('Z'):
-                    ts_clean = ts_clean[:-1] + '+00:00'
-                dt = datetime.fromisoformat(ts_clean)
+                dt = timestamp_str if isinstance(timestamp_str, datetime) else datetime.fromisoformat(
+                    str(timestamp_str).replace(' ', 'T').replace('Z', '+00:00')
+                )
                 timestamps[node] = dt
                 valid_alerts.append(node)
             except:
@@ -280,10 +279,9 @@ def _calculate_temporal_cohesion(subgraph: nx.Graph, alert_nodes: List[str]) -> 
         if timestamp_str:
             try:
                 from datetime import datetime
-                ts_clean = timestamp_str.replace(' ', 'T')
-                if ts_clean.endswith('Z'):
-                    ts_clean = ts_clean[:-1] + '+00:00'
-                dt = datetime.fromisoformat(ts_clean)
+                dt = timestamp_str if isinstance(timestamp_str, datetime) else datetime.fromisoformat(
+                    str(timestamp_str).replace(' ', 'T').replace('Z', '+00:00')
+                )
                 timestamps.append(dt)
             except:
                 pass

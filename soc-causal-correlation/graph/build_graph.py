@@ -11,6 +11,19 @@ except ImportError:
     # Fall back to absolute imports (when run directly)
     from schema import Alert
 import hashlib
+from datetime import datetime
+
+
+def _as_datetime(value: Any) -> datetime | None:
+    """Accept model datetimes and common ISO strings without silently failing."""
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip().replace('Z', '+00:00').replace(' ', 'T'))
+    except ValueError:
+        return None
 
 def build_alert_entity_graph(alerts: List[Alert]) -> nx.Graph:
     """
@@ -35,7 +48,9 @@ def build_alert_entity_graph(alerts: List[Alert]) -> nx.Graph:
                   source_product=alert.source_product,
                   alert_type=alert.alert_type,
                   severity=alert.severity,
-                  raw_text=alert.raw_text)
+                  raw_text=alert.raw_text,
+                  mitre_technique=alert.mitre_technique,
+                  entities=alert.entity_dict())
 
     # Add entity nodes and edges
     for alert in alerts:
@@ -43,7 +58,7 @@ def build_alert_entity_graph(alerts: List[Alert]) -> nx.Graph:
 
         # Process each entity type in the alert
         # Convert Pydantic model to dict to iterate over fields
-        entities_dict = alert.entities.model_dump()
+        entities_dict = alert.entity_dict()
         for entity_type, entity_value in entities_dict.items():
             if not entity_value:  # Skip empty values
                 continue
@@ -82,14 +97,11 @@ def add_temporal_edges(G: nx.Graph, alerts: List[Alert], time_window_seconds: in
     for alert in alerts:
         if alert.timestamp:
             try:
-                # Parse timestamp (simple parsing for MVP)
-                from datetime import datetime
-                # Handle various formats
-                ts_str = alert.timestamp.replace(' ', 'T')
-                dt = datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+                dt = _as_datetime(alert.timestamp)
+                if dt is None:
+                    continue
                 timed_alerts.append((dt, alert))
-            except:
-                # Skip alerts with unparseable timestamps
+            except (TypeError, ValueError):
                 continue
 
     timed_alerts.sort(key=lambda x: x[0])

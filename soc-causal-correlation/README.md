@@ -72,8 +72,10 @@ cp .env.example .env
 ### As a Library
 
 ```python
-from soc_causal_correlation import app
-# Or import specific modules for custom workflows
+from pipeline import alerts_from_text, analyze_alerts
+
+alerts = alerts_from_text(raw_alert_text)
+result = analyze_alerts(alerts)
 ```
 
 ### With Streamlit UI
@@ -114,6 +116,14 @@ Each module follows a clear separation of concerns:
 - `evaluation`: Measures system performance
 - `viz`: Provides visualization capabilities
 - `schema`: Defines data contracts between components
+
+## Current scope
+
+This is a local MVP. It accepts pasted timestamped alert text and includes an
+offline, rule-based normalizer so the demo and Streamlit app work without API
+credentials. The optional Claude normalizer can be used by callers that set
+`ANTHROPIC_API_KEY`. It does not connect to production SIEMs, persist incident
+data, or automatically execute containment actions.
 
 ## Future Enhancements
 

@@ -112,8 +112,10 @@ def _get_latest_alert_timestamp(G: nx.Graph) -> datetime:
 
     return latest
 
-def _parse_timestamp(ts_str: str) -> datetime:
-    """Parse timestamp string into datetime object."""
+def _parse_timestamp(ts_str: str | datetime) -> datetime:
+    """Parse a model datetime or timestamp string into a datetime object."""
+    if isinstance(ts_str, datetime):
+        return ts_str
     if not ts_str or not isinstance(ts_str, str):
         return None
 

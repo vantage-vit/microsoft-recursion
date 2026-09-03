@@ -2,7 +2,7 @@
 Metrics: compression ratio, root-cause top-k accuracy, false-suppression rate
 """
 
-from typing import List, Dict, Any, Tuple, Set
+from typing import List, Dict, Any, Tuple, Set, Optional
 try:
     # Try relative imports (when used as package)
     from ..schema import Incident, Alert
@@ -313,6 +313,6 @@ if __name__ == "__main__":
         Incident(incident_id="INC-001", alert_ids=["alert1", "alert2"], confidence_score=0.8),
         Incident(incident_id="INC-002", alert_ids=["alert3", "alert4", "alert5"], confidence_score=0.6)
     ]
-    all_metrics = metrics.calculate_all_metrics(20, test_incents)
+    all_metrics = metrics.calculate_all_metrics(20, test_incidents)
     print("\nAll metrics:")
     print_metrics_report(all_metrics)
