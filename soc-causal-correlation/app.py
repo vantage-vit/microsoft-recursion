@@ -49,9 +49,9 @@ def main() -> None:
         with st.expander(f"{incident.incident_id} — {len(incident.alert_ids)} alerts", expanded=True):
             a, b, c = st.columns(3)
             a.metric("Confidence", f"{incident.confidence_score:.0%}")
-            b.write("**Likely root cause**", incident.root_cause_alert_id or "Unknown")
-            c.write("**Recommended response**", incident.recommended_action)
-            st.write("**Techniques:**", ", ".join(incident.attack_techniques) or "Not identified")
+            b.markdown(f"**Likely root cause**  \n{incident.root_cause_alert_id or 'Unknown'}")
+            c.markdown(f"**Recommended response**  \n{incident.recommended_action}")
+            st.markdown(f"**Techniques:** {', '.join(incident.attack_techniques) or 'Not identified'}")
             st.dataframe(summary["alerts"], use_container_width=True, hide_index=True)
             graph_html = renderer.render_incident_graph(
                 result["graph"],
