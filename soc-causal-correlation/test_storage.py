@@ -73,36 +73,36 @@ def test_storage():
 
         # Verify that the number of alerts and incidents matches what we expect
         if len(stored_alerts) >= len(alerts):
-            print("✅ Alerts storage: PASS")
+            print("[PASS] Alerts storage: PASS")
         else:
-            print("❌ Alerts storage: FAIL - Expected at least {}, got {}".format(len(alerts), len(stored_alerts)))
+            print("[FAIL] Alerts storage: FAIL - Expected at least {}, got {}".format(len(alerts), len(stored_alerts)))
             return False
 
         if len(stored_incidents) >= len(incidents):
-            print("✅ Incidents storage: PASS")
+            print("[PASS] Incidents storage: PASS")
         else:
-            print("❌ Incidents storage: FAIL - Expected at least {}, got {}".format(len(incidents), len(stored_incidents)))
+            print("[FAIL] Incidents storage: FAIL - Expected at least {}, got {}".format(len(incidents), len(stored_incidents)))
             return False
 
         # Check relationships
         if stored_incidents:
             incident = stored_incidents[0]
             if len(incident.alerts) > 0:
-                print("✅ Incident-Alert relationship: PASS")
+                print("[PASS] Incident-Alert relationship: PASS")
             else:
-                print("❌ Incident-Alert relationship: FAIL - No alerts linked to incident")
+                print("[FAIL] Incident-Alert relationship: FAIL - No alerts linked to incident")
                 return False
 
             if len(incident.techniques) > 0 or len(incident.entities) > 0:
-                print("✠ Incident-Techniques/Entities relationship: PASS")
+                print("[PASS] Incident-Techniques/Entities relationship: PASS")
             else:
-                print("⚠️  Incident-Techniques/Entities relationship: WARNING - No techniques or entities linked (may be expected if none extracted)")
+                print("[WARNING] Incident-Techniques/Entities relationship: WARNING - No techniques or entities linked (may be expected if none extracted)")
 
-        print("\n🎉 All tests passed!")
+        print("\n[SUCCESS] All tests passed!")
         return True
 
     except Exception as e:
-        print(f"❌ Error during verification: {e}")
+        print(f"[ERROR] Error during verification: {e}")
         import traceback
         traceback.print_exc()
         return False

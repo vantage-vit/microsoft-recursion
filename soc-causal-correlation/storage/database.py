@@ -22,10 +22,10 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Database configuration
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
- "postgresql://postgres:ConceptFlow26@localhost:5432/rootline"
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set. Please set it in your .env file or environment.")
+
 DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
 DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))
 DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
@@ -205,7 +205,8 @@ def check_database_connection() -> bool:
     try:
         engine = get_engine()
         with engine.connect() as connection:
-            connection.execute("SELECT 1")
+            from sqlalchemy import text
+            connection.execute(text("SELECT 1"))
         logger.info("Database connection successful")
         return True
     except Exception as e:
