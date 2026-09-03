@@ -146,92 +146,50 @@ class IncidentRepository:
     @staticmethod
     def create_incident(db: Session, incident_data: Dict[str, Any]) -> Incident:
         """
-        Create a new incident record or return existing one if incident_id already exists
+        Create a new incident record
 
         Args:
             db: Database session
             incident_data: Dictionary containing incident fields
 
         Returns:
-            Incident object (created or existing)
+            Created Incident object
         """
         # Extract related data for many-to-many relationships
         alert_ids = incident_data.pop('alert_ids', [])
         techniques = incident_data.pop('techniques', [])
         entities = incident_data.pop('entities', [])
-        incident_id = incident_data.get("incident_id")
 
-        existing_incident = None
-        if incident_id:
-            existing_incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
+        incident = Incident(**incident_data)
+        db.add(incident)
+        db.commit()
+        db.refresh(incident)
 
-        if existing_incident:
-            # Update existing incident with new data (optional)
-            for key, value in incident_data.items():
-                if hasattr(existing_incident, key) and value is not None:
-                    setattr(existing_incident, key, value)
+        # Add associated alerts
+        if alert_ids:
+            alerts = db.query(Alert).filter(Alert.alert_id.in_(alert_ids)).all()
+            incident.alerts = alerts
 
-            # Clear existing relationships and recreate them
-            # Alerts
-            existing_incident.alerts.clear()
-            if alert_ids:
-                alerts = db.query(Alert).filter(Alert.alert_id.in_(alert_ids)).all()
-                existing_incident.alerts = alerts
+        # Add techniques
+        for technique in techniques:
+            incident_technique = IncidentTechnique(
+                incident_id=incident.incident_id,
+                technique=technique
+            )
+            db.add(incident_technique)
 
-            # Techniques
-            existing_incident.techniques.clear()
-            for technique in techniques:
-                incident_technique = IncidentTechnique(
-                    incident_id=existing_incident.incident_id,
-                    technique=technique
-                )
-                db.add(incident_technique)
+        # Add entities
+        for entity in entities:
+            incident_entity = IncidentEntity(
+                incident_id=incident.incident_id,
+                entity_type=entity['type'],
+                entity_value=entity['value']
+            )
+            db.add(incident_entity)
 
-            # Entities
-            existing_incident.entities.clear()
-            for entity in entities:
-                incident_entity = IncidentEntity(
-                    incident_id=existing_incident.incident_id,
-                    entity_type=entity['type'],
-                    entity_value=entity['value']
-                )
-                db.add(incident_entity)
-
-            db.commit()
-            db.refresh(existing_incident)
-            return existing_incident
-        else:
-            # Create new incident
-            incident = Incident(**incident_data)
-            db.add(incident)
-            db.commit()
-            db.refresh(incident)
-
-            # Add associated alerts
-            if alert_ids:
-                alerts = db.query(Alert).filter(Alert.alert_id.in_(alert_ids)).all()
-                incident.alerts = alerts
-
-            # Add techniques
-            for technique in techniques:
-                incident_technique = IncidentTechnique(
-                    incident_id=incident.incident_id,
-                    technique=technique
-                )
-                db.add(incident_technique)
-
-            # Add entities
-            for entity in entities:
-                incident_entity = IncidentEntity(
-                    incident_id=incident.incident_id,
-                    entity_type=entity['type'],
-                    entity_value=entity['value']
-                )
-                db.add(incident_entity)
-
-            db.commit()
-            db.refresh(incident)
-            return incident
+        db.commit()
+        db.refresh(incident)
+        return incident
 
     @staticmethod
     def get_incident_by_id(db: Session, incident_id: str) -> Optional[Incident]:

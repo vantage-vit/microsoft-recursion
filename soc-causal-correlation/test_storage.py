@@ -9,7 +9,7 @@ from datetime import datetime
 # Set up the database URL for testing (if not already set)
 if "DATABASE_URL" not in os.environ:
     # Use a default for testing - adjust as needed
-    os.environ["DATABASE_URL"] = "postgresql://postgres:password@localhost:5432/soc_causal_correlation_test"
+    os.environ["DATABASE_URL"] = "postgresql://postgres:ConceptFlow26@localhost:5432/rootline"
 
 # Now import the modules
 from pipeline import alerts_from_text, analyze_alerts

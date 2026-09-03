@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Database configuration
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://postgres:password@localhost:5432/soc_causal_correlation"
+ "postgresql://postgres:ConceptFlow26@localhost:5432/rootline"
 )
 DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
 DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "10"))

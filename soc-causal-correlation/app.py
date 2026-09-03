@@ -358,7 +358,7 @@ def main() -> None:
             st.markdown(f"**Techniques:** {', '.join(incident_data['techniques']) or 'Not identified'}")
 
             # Display alert details in a table
-            st.dataframe(summary["alerts"], use_container_width=True, hide_index=True)
+            st.dataframe(summary["alerts"], width='stretch', hide_index=True)
 
             # Display historical similarity if available
             if similar_incidents:
