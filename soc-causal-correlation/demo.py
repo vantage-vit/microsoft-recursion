@@ -12,7 +12,8 @@ SAMPLE_ALERTS = """2023-01-15 09:14:02 Identity Platform: Five failed logins in 
 
 def main() -> None:
     alerts = alerts_from_text(SAMPLE_ALERTS)
-    result = analyze_alerts(alerts)
+    # Increase weight threshold to break alert-alert edges
+    result = analyze_alerts(alerts, time_window_seconds=1800, min_alerts=1, weight_threshold=0.95)
     print(f"Processed {len(alerts)} alerts into {len(result['incidents'])} incidents.")
     for incident, summary in zip(result["incidents"], result["summaries"]):
         print(f"\n{incident.incident_id}")

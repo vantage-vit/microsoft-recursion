@@ -2,6 +2,8 @@
 
 import streamlit as st
 import streamlit.components.v1 as components
+import networkx as nx
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -23,6 +25,119 @@ except ImportError:
     # Create a dummy logger for when storage is not available
     import logging
     logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+# ----------------------------------------------------------------------
+# Error logging setup
+# ----------------------------------------------------------------------
+ERROR_LOG = Path(__file__).parent / "logs" / "errors.log"
+ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+def log_error(message: str, source: str = "ErrorGenerator") -> None:
+    """
+    Append a single line to logs/errors.log.
+    The line format matches what the heuristic normaliser expects:
+        <timestamp> <source>: <message>
+    """
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    with ERROR_LOG.open("a", encoding="utf-8") as f:
+        f.write(f"{ts} {source}: {message}\n")
+
+# ----------------------------------------------------------------------
+# Helper to read new lines from the error log since last read
+# ----------------------------------------------------------------------
+def get_new_error_lines() -> list[str]:
+    """Return new lines appended to ERROR_LOG since last call and update the stored position."""
+    if "log_last_pos" not in st.session_state:
+        st.session_state.log_last_pos = 0
+
+    lines = []
+    try:
+        with ERROR_LOG.open("r", encoding="utf-8") as f:
+            f.seek(st.session_state.log_last_pos)
+            new_data = f.read()
+            if new_data:
+                lines = [ln.rstrip("\n") for ln in new_data.splitlines() if ln.strip()]
+                st.session_state.log_last_pos = f.tell()
+    except FileNotFoundError:
+        # If the log file hasn't been created yet, treat as no new lines.
+        pass
+    return lines
+
+# ----------------------------------------------------------------------
+# Process new error lines through the existing correlation pipeline
+# ----------------------------------------------------------------------
+def process_error_lines(time_window_minutes: int, min_alerts: int) -> dict | None:
+    """
+    Pull new error lines from the log, normalise them, run the correlation pipeline,
+    and return a dict compatible with the existing rendering code.
+    Returns None if there were no new lines.
+    """
+    lines = get_new_error_lines()
+    if not lines:
+        return None
+
+    raw_text = "\n".join(lines)        # one alert per line
+    alerts = alerts_from_text(raw_text)
+    result = analyze_alerts(
+        alerts,
+        time_window_seconds=time_window_minutes * 60,
+        min_alerts=int(min_alerts),
+    )
+    # Include the alerts list so the rendering function can show metrics etc.
+    result["alerts"] = alerts
+    return result
+
+# ----------------------------------------------------------------------
+# Display helper – reuse the same rendering logic as the normal alerts
+# ----------------------------------------------------------------------
+def display_correlation_result(result: dict) -> None:
+    """Render the correlation result using the same widgets as the normal flow."""
+    if not result or not result.get("incidents"):
+        st.info("No incident met the selected minimum. Reduce the minimum alert count or widen the time window.")
+        return
+
+    incidents = result["incidents"]
+    summaries = result["summaries"]
+    graph = result["graph"]
+    clusters = result["clusters"]
+    alerts = result["alerts"]
+
+    st.subheader("🔎 Correlation result")
+    first, second, third = st.columns(3)
+    first.metric("Input alerts", len(alerts))
+    second.metric("Correlated incidents", len(incidents))
+    third.metric(
+        "Compression",
+        f"{len(alerts) / len(incidents):.1f}×" if incidents else "—",
+    )
+
+    if not incidents:
+        st.info("No cluster met the selected minimum. Reduce the minimum alert count or widen the time window.")
+        return
+
+    renderer = IncidentGraphRenderer(height="520px")
+    for incident, summary, cluster in zip(incidents, summaries, clusters):
+        # Build a subgraph containing only the nodes and edges of this incident
+        subgraph = graph.subgraph(cluster).copy()
+        with st.expander(
+            f"{incident.incident_id} — {len(incident.alert_ids)} alerts", expanded=True
+        ):
+            a, b, c = st.columns(3)
+            a.metric("Confidence", f"{incident.confidence_score:.0%}")
+            b.markdown(f"**Likely root cause**  \n{incident.root_cause_alert_id or 'Unknown'}")
+            c.markdown(f"**Recommended response**  \n{incident.recommended_action}")
+            st.markdown(f"**Techniques:** {', '.join(incident.attack_techniques) or 'Not identified'}")
+            st.dataframe(summary["alerts"], use_container_width=True, hide_index=True)
+            graph_html = renderer.render_incident_graph(
+                subgraph,
+                incident_nodes=None,  # subgraph already filtered
+                highlight_root_cause=incident.root_cause_alert_id,
+            )
+            if graph_html.lstrip().startswith("{"):
+                st.json(graph_html)
+            else:
+                components.html(graph_html, height=540, scrolling=True)
+
 
 SAMPLE_ALERTS = """2023-01-15 09:14:02 Identity Platform: Five failed logins in 40 seconds for j.suresh@acmecorp.com
 2023-01-15 09:16:40 Identity Platform: Successful login from unrecognized device for j.suresh@acmecorp.com
@@ -128,89 +243,75 @@ def get_security_guidance(incident: Dict[str, Any]) -> Dict[str, List[str]]:
             "Collect forensic evidence for potential legal proceedings"
         ]
         dont_actions = [
-            "Leave the host connected to the production network",
-            "Allow users to continue using the host normally",
-            "Power off the host without preserving volatile memory",
-            "Attempt to clean the host without proper forensic procedures"
+            "Ignore the alert assuming it's a false positive",
+            "Allow the host to remain connected to the network",
+            "Delay action pending further investigation without interim protections",
+            "Attempt to remediate without proper expertise or tools"
         ]
-    elif primary_entity_type == "ip":
+    elif primary_entity_type == "ip_address":
         do_actions = [
-            "Block the IP address at the firewall perimeter",
-            "Review traffic logs for data exfiltration patterns",
-            "Check internal systems for communication with this IP",
-            "Investigate if the IP is associated with known threat actors",
-            "Monitor for alternative IP addresses used by the same threat actor"
+            "Block the IP address at the firewall",
+            "Investigate the geographic origin of the IP address",
+            "Check for other malicious activity from the same IP address or range",
+            "Monitor for attempts to communicate with the blocked IP address",
+            "Consider contacting the ISP or relevant authority if the IP is static"
         ]
         dont_actions = [
-            "Assume the IP is spoofed without investigation",
-            "Delay blocking pending further confirmation",
-            "Share blocking details publicly that could alert attackers",
-            "Overlook internal systems that may have initiated contact"
+            "Ignore the alert assuming it's a false positive",
+            "Allow traffic to/from the IP address to continue",
+            "Delay action pending further investigation",
+            "Attempt to hack back or retaliate against the IP address"
         ]
-    elif primary_entity_type == "cloud_role":
+    elif primary_entity_type == "domain":
         do_actions = [
-            "Revoke the assumed cloud role/session immediately",
-            "Rotate cloud credentials and review access logs",
-            "Audit cloud role usage and permissions for principle of least privilege",
-            "Check for any unauthorized data access or exfiltration",
-            "Implement stricter conditional access policies for cloud resources"
+            "Block the domain at the DNS level",
+            "Check SSL/TLS certificates for the domain",
+            "Investigate the domain registration details",
+            "Monitor for new domains with similar names (typosquatting)",
+            "Scan internal systems for signs of compromise from this domain"
         ]
         dont_actions = [
-            "Assume the role assumption was legitimate without verification",
-            "Delay revocation pending completion of other tasks",
-            "Overlook other cloud roles that may have been compromised",
-            "Fail to notify relevant cloud service provider of potential compromise"
+            "Ignore the alert assuming it's a false positive",
+            "Allow access to the domain to continue",
+            "Delay action pending further investigation",
+            "Attempt to negotiate with the domain owner"
         ]
     else:
         # Generic guidance
         do_actions = [
-            "Isolate affected systems or accounts pending investigation",
-            "Collect and preserve relevant logs and evidence",
-            "Notify appropriate incident response team members",
-            "Document all findings and actions taken",
-            "Review and update security monitoring rules based on findings"
+            "Isolate the affected resource if possible",
+            "Collect relevant logs and evidence",
+            "Notify the appropriate security team or management",
+            "Document the incident for post-event analysis",
+            "Implement monitoring to detect similar activity"
         ]
         dont_actions = [
-            "Assume the incident is isolated without checking for related activity",
-            "Delay notification to avoid panic or embarrassment",
-            "Overlook potential regulatory or compliance reporting requirements",
-            "Fail to conduct a lessons-learned session after resolution"
+            "Ignore the alert assuming it's a false positive",
+            "Destroy or tamper with potential evidence",
+            "Delay action without interim protections",
+            "Assume the incident is resolved without proper validation"
         ]
 
-    # Adjust based on confidence level
+    # Adjust guidance based on confidence level
     if confidence_level == "low":
-        do_actions.insert(0, "Gather additional evidence before taking disruptive actions")
-        dont_actions.append("Take drastic actions based solely on low-confidence alerts")
+        do_actions.insert(0, "Gather more evidence to increase confidence in the analysis")
+        dont_actions.append("Take drastic actions based on low-confidence analysis")
     elif confidence_level == "high":
-        do_actions.insert(0, "Take immediate action based on high-confidence correlation")
-        dont_actions.append("Wait for additional confirmation when confidence is high")
+        dont_actions.insert(0, "Second-guess the analysis without additional evidence")
+        do_actions.append("Consider proactive threat hunting for similar indicators")
 
-    # Add technique-specific guidance
-    if any("T1078" in t for t in techniques):  # Valid Accounts
-        do_actions.append("Review all active user sessions and consider forced re-authentication")
-        dont_actions.append("Overlook service accounts or admin accounts in review")
-    if any("T1110" in t for t in techniques):  # Brute Force
-        do_actions.append("Implement account lockout policies and CAPTCHA where appropriate")
-        dont_actions.append("Rely solely on password complexity without rate limiting")
-    if any("T1041" in t for t in techniques):  # Exfiltration Over Command and Control
-        do_actions.append("Monitor for unusual outbound traffic patterns and data transfers")
-        dont_actions.append("Allow large data transfers without inspection or approval")
-
-    return {
-        "do": do_actions[:5],  # Limit to top 5
-        "dont": dont_actions[:5]  # Limit to top 5
-    }
+    return {"do": do_actions, "dont": dont_actions}
 
 
 def get_historical_similarity(incident_id: str) -> List[Dict[str, Any]]:
     """
-    Find similar historical incidents from the database.
+    Get historically similar incidents from the database.
 
     Args:
-        incident_id: Current incident ID to find similarities for
+        incident_id: The current incident identifier
 
     Returns:
-        List of similar historical incidents (empty list if storage not available or error)
+        List of similar incidents with similarity basis and confidence
     """
     if not STORAGE_AVAILABLE:
         return []
@@ -218,55 +319,17 @@ def get_historical_similarity(incident_id: str) -> List[Dict[str, Any]]:
     try:
         with get_db_context() as db:
             incident_repo = IncidentRepository()
-            # For now, we'll get recent incidents and do simple matching
-            # In a full implementation, we would use more sophisticated similarity metrics
-            recent_incidents = incident_repo.get_recent_incidents(db, limit=50)
-
-            # Get current incident details for comparison
-            current_incident = incident_repo.get_incident_by_id(db, incident_id)
-            if not current_incident:
-                return []
-
-            similar = []
-            current_techniques = set()
-            if hasattr(current_incident, 'attack_techniques'):
-                current_techniques = set(current_incident.attack_techniques)
-            current_entities = set()
-            if hasattr(current_incident, 'participating_entities'):
-                for entity_type, values in current_incident.participating_entities.items():
-                    for value in values:
-                        current_entities.add((entity_type, value))
-
-            for inc in recent_incidents:
-                if inc.incident_id == incident_id:
-                    continue  # Skip current incident
-
-                # Simple similarity based on shared techniques or entities
-                inc_techniques = set()
-                if hasattr(inc, 'attack_techniques'):
-                    inc_techniques = set(inc.attack_techniques)
-                inc_entities = set()
-                if hasattr(inc, 'participating_entities'):
-                    for entity_type, values in inc.participating_entities.items():
-                        for value in values:
-                            inc_entities.add((entity_type, value))
-
-                technique_similarity = len(current_techniques & inc_techniques) > 0
-                entity_similarity = len(current_entities & inc_entities) > 0
-
-                if technique_similarity or entity_similarity:
-                    similar.append({
-                        "incident_id": inc.incident_id,
-                        "confidence_score": inc.confidence_score,
-                        "time_range_start": inc.time_range_start,
-                        "time_range_end": inc.time_range_end,
-                        "recommended_action": inc.recommended_action,
-                        "similarity_basis": "shared techniques" if technique_similarity else "shared entities"
-                    })
-
-            return similar[:3]  # Return top 3 most recent similar incidents
+            similar = incident_repo.get_similar_incidents(db, incident_id, limit=5)
+            return [
+                {
+                    "incident_id": sim.incident_id,
+                    "confidence_score": sim.confidence_score,
+                    "similarity_basis": sim.similarity_basis or "Unknown",
+                }
+                for sim in similar
+            ]
     except Exception as e:
-        # In case of error, return empty list to avoid breaking the UI
+        st.warning(f"Could not fetch historical similarity: {e}")
         return []
 
 
@@ -394,6 +457,35 @@ def main() -> None:
                 st.json(graph_html)
             else:
                 components.html(graph_html, height=540, scrolling=True)
+
+    st.divider()
+    st.subheader("🚨 Error‑injection demo")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("💥 Inject a synthetic error"):
+            # Inject a few sample error lines
+            log_error(
+                "Traceback (most recent call last):\n  File \"demo.py\", line 13, in <module>\n  raise ValueError('demo failure')"
+            )
+            log_error("Failed to connect to upstream service: timeout after 30s")
+            log_error("Invalid token received from user alice@example.com")
+            st.success("Injected 3 error lines – press ▶️ Check for new errors to see the correlation.")
+    with col2:
+        if st.button("▶️ Check for new errors (manual)"):
+            err_res = process_error_lines(time_window, min_alerts)
+            if err_res is None:
+                st.info("No new error lines were found.")
+            else:
+                display_correlation_result(err_res)
+
+    # Optional: auto‑refresh every 4 seconds (uncomment if you installed streamlit‑autorefresh)
+    # from streamlit_autorefresh import st_autorefresh
+    # _ = st_autorefresh(interval=4000, limit=None, key="error_auto_refresh")
+    # if _:   # runs on each refresh after the first
+    #     err_res = process_error_lines(time_window, min_alerts)
+    #     if err_res:
+    #         st.subheader("🔴 Live error correlation (auto‑refresh)")
+    #         display_correlation_result(err_res)
 
 
 if __name__ == "__main__":
