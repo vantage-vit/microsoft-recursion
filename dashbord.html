@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>INC-2091 — Causal incident view</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#10131A;
+    --panel:#181C25;
+    --panel-raised:#1F2430;
+    --border:#262B37;
+    --border-strong:#3A4050;
+    --text:#ECEDF0;
+    --text-secondary:#9095A3;
+    --text-muted:#5C6270;
+    --copper:#C6784B;
+    --copper-dim:rgba(198,120,75,0.14);
+    --copper-text:#E3A87C;
+    --critical:#E5484D;
+    --high:#E8823C;
+    --medium:#E0B341;
+    --info:#5B7A99;
+    --success:#3FB68B;
+    --font-sans:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,sans-serif;
+    --font-mono:'IBM Plex Mono','SF Mono',Consolas,monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-sans);
+    font-size:14px;
+    line-height:1.5;
+  }
+  *:focus-visible{outline:2px solid var(--copper); outline-offset:2px;}
+
+  .app{
+    display:grid;
+    grid-template-columns:280px 1fr 340px;
+    grid-template-rows:60px 1fr;
+    height:100vh;
+  }
+
+  /* ---- Top bar ---- */
+  .topbar{
+    grid-column:1 / -1;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:0 20px;
+    border-bottom:1px solid var(--border);
+    background:var(--panel);
+  }
+  .topbar-left{display:flex; align-items:center; gap:12px;}
+  .incident-id{font-family:var(--font-mono); font-size:15px; font-weight:600; letter-spacing:0.2px;}
+  .status-pill{
+    font-size:11px;
+    font-family:var(--font-mono);
+    padding:3px 8px;
+    border-radius:4px;
+    border:1px solid var(--copper);
+    color:var(--copper-text);
+    background:var(--copper-dim);
+  }
+  .topbar-stats{display:flex; gap:24px;}
+  .stat{text-align:right;}
+  .stat-value{font-family:var(--font-mono); font-size:14px; font-weight:600;}
+  .stat-label{font-size:11px; color:var(--text-muted); margin-top:2px;}
+
+  /* ---- Shared panel headers ---- */
+  .panel-header{
+    padding:14px 18px;
+    border-bottom:1px solid var(--border);
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+  }
+  .panel-title{font-size:13px; font-weight:600; color:var(--text);}
+  .panel-sub{font-size:11px; color:var(--text-muted); font-family:var(--font-mono);}
+
+  /* ---- Left rail: ledger ---- */
+  .ledger{
+    grid-column:1;
+    border-right:1px solid var(--border);
+    background:var(--panel);
+    overflow-y:auto;
+  }
+  .ledger-list{padding:10px;}
+  .ledger-item{
+    display:flex;
+    gap:10px;
+    padding:10px 8px;
+    border-radius:5px;
+    cursor:pointer;
+    border-left:2px solid transparent;
+    transition:background .15s ease, border-color .15s ease;
+  }
+  .ledger-item:hover{background:var(--panel-raised);}
+  .ledger-item.active{background:var(--panel-raised); border-left-color:var(--copper);}
+  .ledger-dot{width:8px; height:8px; border-radius:50%; margin-top:5px; flex-shrink:0;}
+  .ledger-body{min-width:0;}
+  .ledger-time{font-family:var(--font-mono); font-size:11px; color:var(--text-muted);}
+  .ledger-title{font-size:12.5px; margin-top:2px;}
+  .ledger-source{font-size:11px; color:var(--text-secondary); margin-top:2px;}
+
+  .noise-header{
+    padding:12px 18px 6px;
+    font-size:11px;
+    color:var(--text-muted);
+  }
+  .noise-item{
+    display:flex;
+    gap:10px;
+    padding:8px;
+    opacity:0.5;
+  }
+  .noise-item .ledger-dot{background:var(--text-muted);}
+  .noise-item .ledger-title{color:var(--text-secondary);}
+
+  /* ---- Center: causal spine ---- */
+  .spine{
+    grid-column:2;
+    overflow-y:auto;
+    padding:24px 32px;
+  }
+  .spine-intro{font-size:12px; color:var(--text-muted); margin-bottom:20px; max-width:60ch;}
+  .stage{display:flex; gap:16px;}
+  .stage-marker{width:20px; display:flex; flex-direction:column; align-items:center; flex-shrink:0;}
+  .stage-dot{
+    width:13px; height:13px; border-radius:50%;
+    margin-top:18px;
+    border:2px solid var(--bg);
+    box-shadow:0 0 0 1px var(--border-strong);
+  }
+  .stage-dot.root{
+    background:var(--copper);
+    box-shadow:0 0 0 4px var(--copper-dim);
+  }
+  .stage-line{width:2px; flex:1; background:var(--border-strong); min-height:24px;}
+  .stage:last-child .stage-line{background:transparent;}
+
+  .stage-card{
+    flex:1;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:6px;
+    padding:14px 16px;
+    margin-bottom:20px;
+    cursor:pointer;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .stage-card:hover{border-color:var(--border-strong);}
+  .stage-card.active{border-color:var(--copper);}
+  .stage-card.root{background:var(--copper-dim); border-color:var(--copper);}
+  @media (prefers-reduced-motion: no-preference){
+    .stage-card{transition:border-color .15s ease, background .15s ease, transform .1s ease;}
+    .stage-card:hover{transform:translateX(2px);}
+  }
+
+  .stage-row{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  .stage-time{font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted);}
+  .stage-tag{
+    font-size:10.5px;
+    font-family:var(--font-mono);
+    padding:2px 7px;
+    border-radius:3px;
+    color:#0F1116;
+    font-weight:600;
+  }
+  .stage-title{font-size:14px; font-weight:500; margin-top:8px;}
+  .stage-meta{font-size:12px; color:var(--text-secondary); margin-top:5px; font-family:var(--font-mono);}
+  .root-label{
+    display:inline-block;
+    font-size:10.5px;
+    color:var(--copper-text);
+    font-family:var(--font-mono);
+    margin-top:8px;
+  }
+
+  /* ---- Right rail: evidence ---- */
+  .evidence{
+    grid-column:3;
+    border-left:1px solid var(--border);
+    background:var(--panel);
+    overflow-y:auto;
+  }
+  .evidence-section{padding:16px 18px; border-bottom:1px solid var(--border);}
+  .evidence-section:last-child{border-bottom:none;}
+  .section-label{font-size:11px; color:var(--text-muted); margin-bottom:10px;}
+  #evidence-detail .stage-title{margin-top:0;}
+  #evidence-detail .stage-meta{margin-top:8px;}
+  .reasoning{font-size:12.5px; color:var(--text-secondary); margin-top:10px; line-height:1.6;}
+
+  .confidence-row{display:flex; align-items:center; gap:10px; margin-top:10px;}
+  .confidence-bar{flex:1; height:6px; background:var(--panel-raised); border-radius:3px; overflow:hidden;}
+  .confidence-fill{height:100%; background:var(--copper); width:82%;}
+  .confidence-value{font-family:var(--font-mono); font-size:12px; color:var(--copper-text); min-width:32px; text-align:right;}
+
+  .hypothesis{display:flex; justify-content:space-between; font-size:12px; color:var(--text-secondary); margin-top:8px;}
+  .hypothesis span:last-child{font-family:var(--font-mono); color:var(--text-muted);}
+
+  .action-primary{
+    font-size:13px;
+    font-weight:600;
+    padding:9px 14px;
+    background:var(--copper);
+    color:#1A0F08;
+    border-radius:5px;
+    display:inline-block;
+    margin-top:4px;
+  }
+  .action-note{font-size:12px; color:var(--text-secondary); margin-top:10px; line-height:1.6;}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="incident-id">INC-2091</span>
+      <span class="status-pill">Active</span>
+    </div>
+    <div class="topbar-stats">
+      <div class="stat"><div class="stat-value">14 &rarr; 1</div><div class="stat-label">Alert compression</div></div>
+      <div class="stat"><div class="stat-value">6m 12s</div><div class="stat-label">Time to root cause</div></div>
+      <div class="stat"><div class="stat-value">2</div><div class="stat-label">Concurrent incidents</div></div>
+    </div>
+  </div>
+
+  <div class="ledger">
+    <div class="panel-header">
+      <span class="panel-title">Incident ledger</span>
+      <span class="panel-sub">5 linked</span>
+    </div>
+    <div class="ledger-list" id="ledger-list">
+      <!-- populated by JS to stay in sync with spine -->
+    </div>
+    <div class="noise-header">Filtered as noise &middot; 2</div>
+    <div class="ledger-list">
+      <div class="noise-item">
+        <div class="ledger-dot"></div>
+        <div class="ledger-body">
+          <div class="ledger-time">09:12:47</div>
+          <div class="ledger-title">Password reset &mdash; helpdesk ticket #4471</div>
+        </div>
+      </div>
+      <div class="noise-item">
+        <div class="ledger-dot"></div>
+        <div class="ledger-body">
+          <div class="ledger-time">09:20:03</div>
+          <div class="ledger-title">VPN reconnect &mdash; routine</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="spine">
+    <p class="spine-intro">Five alerts, four source systems, one compromised identity. Ordered by time &mdash; not by severity &mdash; so the root cause stays visible instead of getting buried under the loudest alert.</p>
+    <div id="spine-list"></div>
+  </div>
+
+  <div class="evidence">
+    <div class="evidence-section">
+      <div class="section-label">Selected alert</div>
+      <div id="evidence-detail"></div>
+    </div>
+    <div class="evidence-section">
+      <div class="section-label">Root cause</div>
+      <div class="stage-title" style="font-size:13px;">Credential compromise via password spray</div>
+      <div class="confidence-row">
+        <div class="confidence-bar"><div class="confidence-fill"></div></div>
+        <div class="confidence-value">82%</div>
+      </div>
+      <div class="hypothesis"><span>Alt: insider misuse of credentials</span><span>12%</span></div>
+      <div class="hypothesis"><span>Alt: shared device, no compromise</span><span>6%</span></div>
+    </div>
+    <div class="evidence-section">
+      <div class="section-label">Recommended action</div>
+      <div class="action-primary">Revoke session token &mdash; j.suresh</div>
+      <div class="action-note">Host isolation not recommended. The compromised asset is one scoped credential, not the device or the cloud account &mdash; revoking it stops progression without disrupting the rest of the team's work.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const stages = [
+    {
+      id: 1, time: '09:14:02', source: 'Identity platform', severity: 'medium', root: true,
+      title: 'Five failed logins in 40 seconds',
+      entity: 'j.suresh@acmecorp.com', technique: 'T1110 &mdash; Brute force',
+      reasoning: 'Earliest event in the chain. Precedes every other alert by at least four minutes and shares the same identity as every downstream stage &mdash; the pattern of a password spray, not a mistyped login.'
+    },
+    {
+      id: 2, time: '09:16:40', source: 'Identity platform', severity: 'medium', root: false,
+      title: 'Successful login from unrecognized device',
+      entity: 'j.suresh@acmecorp.com', technique: 'T1078 &mdash; Valid accounts',
+      reasoning: 'Occurs two minutes after the failed-login burst, from a device never seen for this identity before. Same entity as stage one &mdash; linked, not coincidental.'
+    },
+    {
+      id: 3, time: '09:18:12', source: 'Endpoint (EDR)', severity: 'high', root: false,
+      title: 'PowerShell spawned with encoded command',
+      entity: 'DESKTOP-7QK41', technique: 'T1059.001 &mdash; PowerShell',
+      reasoning: 'Process launched under the compromised session, 92 seconds after login. Encoded command is consistent with staging further tooling.'
+    },
+    {
+      id: 4, time: '09:24:55', source: 'Cloud (AWS)', severity: 'high', root: false,
+      title: 'New cloud role assumed &mdash; AssumeRole',
+      entity: 'arn:aws:iam::role/finance-read', technique: 'T1078.004 &mdash; Cloud accounts',
+      reasoning: 'Role assumption traced to credentials cached on the same endpoint from stage three. The identity is pivoting from device to cloud.'
+    },
+    {
+      id: 5, time: '09:41:03', source: 'Firewall', severity: 'critical', root: false,
+      title: 'Outbound transfer &mdash; 2.3GB to unrecognized IP',
+      entity: '203.0.113.44', technique: 'T1567 &mdash; Exfiltration over web service',
+      reasoning: 'Highest-severity alert in the chain and the one most SOC queues would triage first &mdash; but it is a downstream consequence, not the origin.'
+    }
+  ];
+
+  const severityColor = { medium: 'var(--medium)', high: 'var(--high)', critical: 'var(--critical)' };
+  const severityLabel = { medium: 'Medium', high: 'High', critical: 'Critical' };
+
+  const ledgerList = document.getElementById('ledger-list');
+  const spineList = document.getElementById('spine-list');
+
+  stages.forEach((s, i) => {
+    // Ledger entry
+    const li = document.createElement('div');
+    li.className = 'ledger-item';
+    li.dataset.id = s.id;
+    li.innerHTML = `
+      <div class="ledger-dot" style="background:${severityColor[s.severity]}"></div>
+      <div class="ledger-body">
+        <div class="ledger-time">${s.time}</div>
+        <div class="ledger-title">${s.title}</div>
+        <div class="ledger-source">${s.source}</div>
+      </div>`;
+    li.addEventListener('click', () => selectStage(s.id));
+    ledgerList.appendChild(li);
+
+    // Spine entry
+    const stage = document.createElement('div');
+    stage.className = 'stage';
+    stage.innerHTML = `
+      <div class="stage-marker">
+        <div class="stage-dot ${s.root ? 'root' : ''}"></div>
+        <div class="stage-line"></div>
+      </div>
+      <div class="stage-card ${s.root ? 'root' : ''}" data-id="${s.id}">
+        <div class="stage-row">
+          <span class="stage-time">${s.time}</span>
+          <span class="stage-tag" style="background:${severityColor[s.severity]}">${severityLabel[s.severity]}</span>
+        </div>
+        <div class="stage-title">${s.title}</div>
+        <div class="stage-meta">${s.source} &middot; ${s.entity}</div>
+        ${s.root ? '<div class="root-label">Root cause &middot; 82% confidence</div>' : ''}
+      </div>`;
+    stage.querySelector('.stage-card').addEventListener('click', () => selectStage(s.id));
+    spineList.appendChild(stage);
+  });
+
+  function selectStage(id) {
+    const s = stages.find(x => x.id === id);
+    document.querySelectorAll('.ledger-item').forEach(el => el.classList.toggle('active', Number(el.dataset.id) === id));
+    document.querySelectorAll('.stage-card').forEach(el => el.classList.toggle('active', Number(el.dataset.id) === id));
+
+    document.getElementById('evidence-detail').innerHTML = `
+      <div class="stage-title">${s.title}</div>
+      <div class="stage-meta">${s.time} &middot; ${s.source}</div>
+      <div class="stage-meta">${s.entity}</div>
+      <div class="stage-meta">${s.technique}</div>
+      <div class="reasoning">${s.reasoning}</div>`;
+  }
+
+  selectStage(1);
+</script>
+</body>
+</html>
