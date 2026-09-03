@@ -2,6 +2,8 @@
 
 import streamlit as st
 import streamlit.components.v1 as components
+import networkx as nx
+from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -24,6 +26,122 @@ except ImportError:
     import logging
     logging.getLogger(__name__).addHandler(logging.NullHandler())
 
+# ----------------------------------------------------------------------
+# Error logging setup
+# ----------------------------------------------------------------------
+ERROR_LOG = Path(__file__).parent / "logs" / "errors.log"
+ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+
+def log_error(message: str, source: str = "ErrorGenerator") -> None:
+    """
+    Append a single line to logs/errors.log.
+    The line format matches what the heuristic normaliser expects:
+        <timestamp> <source>: <message>
+    """
+    ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    with ERROR_LOG.open("a", encoding="utf-8") as f:
+        f.write(f"{ts} {source}: {message}\n")
+
+# ----------------------------------------------------------------------
+# Helper to read new lines from the error log since last read
+# ----------------------------------------------------------------------
+def get_new_error_lines() -> list[str]:
+    """Return new lines appended to ERROR_LOG since last call and update the stored position."""
+    if "log_last_pos" not in st.session_state:
+        st.session_state.log_last_pos = 0
+
+    lines = []
+    try:
+        with ERROR_LOG.open("r", encoding="utf-8") as f:
+            f.seek(st.session_state.log_last_pos)
+            new_data = f.read()
+            if new_data:
+                lines = [ln.rstrip("\n") for ln in new_data.splitlines() if ln.strip()]
+                st.session_state.log_last_pos = f.tell()
+    except FileNotFoundError:
+        # If the log file hasn't been created yet, treat as no new lines.
+        pass
+    return lines
+
+# ----------------------------------------------------------------------
+# Process new error lines through the existing correlation pipeline
+# ----------------------------------------------------------------------
+def process_error_lines(time_window_minutes: int, min_alerts: int) -> dict | None:
+    """
+    Pull new error lines from the log, normalise them, run the correlation pipeline,
+    and return a dict compatible with the existing rendering code.
+    Returns None if there were no new lines.
+    """
+    lines = get_new_error_lines()
+    if not lines:
+        return None
+
+    raw_text = "\n".join(lines)        # one alert per line
+    alerts = alerts_from_text(raw_text)
+    result = analyze_alerts(
+        alerts,
+        time_window_seconds=time_window_minutes * 60,
+        min_alerts=int(min_alerts),
+    )
+    # Include the alerts list so the rendering function can show metrics etc.
+    result["alerts"] = alerts
+    return result
+
+# ----------------------------------------------------------------------
+# Display helper – reuse the same rendering logic as the normal alerts
+# ----------------------------------------------------------------------
+def display_correlation_result(result: dict) -> None:
+    """Render the correlation result using the same widgets as the normal flow."""
+    if not result or not result.get("incidents"):
+        st.info("No incident met the selected minimum. Reduce the minimum alert count or widen the time window.")
+        return
+
+    incidents = result["incidents"]
+    summaries = result["summaries"]
+    graph = result["graph"]
+    clusters = result["clusters"]
+    alerts = result["alerts"]
+
+    st.subheader("🔎 Correlation result")
+    first, second, third = st.columns(3)
+    first.metric("Input alerts", len(alerts))
+    second.metric("Correlated incidents", len(incidents))
+    third.metric(
+        "Compression",
+        f"{len(alerts) / len(incidents):.1f}×" if incidents else "—",
+    )
+
+    if not incidents:
+        st.info("No cluster met the selected minimum. Reduce the minimum alert count or widen the time window.")
+        return
+
+    renderer = IncidentGraphRenderer(height="520px")
+    for incident, summary, cluster in zip(incidents, summaries, clusters):
+        # Build a subgraph containing only the nodes and edges of this incident
+        subgraph = graph.subgraph(cluster).copy()
+        with st.expander(
+            f"{incident.incident_id} — {len(incident.alert_ids)} alerts", expanded=True
+        ):
+            a, b, c = st.columns(3)
+            a.metric("Confidence", f"{incident.confidence_score:.0%}")
+            b.markdown(f"**Likely root cause**  \n{incident.root_cause_alert_id or 'Unknown'}")
+            c.markdown(f"**Recommended response**  \n{incident.recommended_action}")
+            st.markdown(f"**Techniques:** {', '.join(incident.attack_techniques) or 'Not identified'}")
+            st.dataframe(summary["alerts"], use_container_width=True, hide_index=True)
+            graph_html = renderer.render_incident_graph(
+                subgraph,
+                incident_nodes=None,  # subgraph already filtered
+                highlight_root_cause=incident.root_cause_alert_id,
+            )
+            if graph_html.lstrip().startswith("{"):
+                st.json(graph_html)
+            else:
+                components.html(graph_html, height=540, scrolling=True)
+
+
+# ----------------------------------------------------------------------
+# Main Streamlit app
+# ----------------------------------------------------------------------
 SAMPLE_ALERTS = """2023-01-15 09:14:02 Identity Platform: Five failed logins in 40 seconds for j.suresh@acmecorp.com
 2023-01-15 09:16:40 Identity Platform: Successful login from unrecognized device for j.suresh@acmecorp.com
 2023-01-15 09:18:12 Endpoint (EDR): PowerShell spawned with encoded command on DESKTOP-7QK41
@@ -291,109 +409,143 @@ def main() -> None:
     raw_text = st.text_area("Security alerts", value=SAMPLE_ALERTS, height=220)
     left, middle, right = st.columns(3)
     with left:
-        time_window = st.slider("Correlation window (minutes)", 5, 240, 30)
+        time_window = st.slider(
+            "Correlation window (minutes)", 5, 240, 30, key="time_window_slider"
+        )
     with middle:
-        min_alerts = st.number_input("Minimum alerts per incident", 1, 20, 2)
+        min_alerts = st.number_input(
+            "Minimum alerts per incident", 1, 20, 2, key="min_alerts_input"
+        )
     with right:
         st.write("")
         analyze = st.button("Analyze alerts", type="primary", use_container_width=True)
 
-    if not analyze:
-        return
 
-    alerts = alerts_from_text(raw_text)
-    if not alerts:
-        st.warning("No timestamped alert lines were found. Add one alert per line.")
-        return
+if not analyze:
+    return
 
-    result = analyze_alerts(alerts, time_window * 60, int(min_alerts))
-    incidents = result["incidents"]
-    st.subheader("Results")
-    first, second, third = st.columns(3)
-    first.metric("Input alerts", len(alerts))
-    second.metric("Correlated incidents", len(incidents))
-    third.metric("Compression", f"{len(alerts) / len(incidents):.1f}×" if incidents else "—")
+alerts = alerts_from_text(raw_text)
+if not alerts:
+    st.warning("No timestamped alert lines were found. Add one alert per line.")
+    return
 
-    if not incidents:
-        st.info("No cluster met the selected minimum. Reduce the minimum alert count or widen the time window.")
-        return
+result = analyze_alerts(alerts, time_window * 60, int(min_alerts))
+incidents = result["incidents"]
+st.subheader("Results")
+first, second, third = st.columns(3)
+first.metric("Input alerts", len(alerts))
+second.metric("Correlated incidents", len(incidents))
+third.metric("Compression", f"{len(alerts) / len(incidents):.1f}×" if incidents else "—")
 
-    renderer = IncidentGraphRenderer(height="520px")
-    for incident, summary, cluster in zip(incidents, result["summaries"], result["clusters"]):
-        with st.expander(f"{incident.incident_id} — {len(incident.alert_ids)} alerts", expanded=True):
-            # Get detailed incident information from database if available
-            db_incident_details = get_db_incident_details(incident.incident_id)
+if not incidents:
+    st.info("No cluster met the selected minimum. Reduce the minimum alert count or widen the time window.")
+    return
 
-            # Use database details if available, otherwise fall back to incident object
-            incident_data = db_incident_details if db_incident_details else {
-                "incident_id": incident.incident_id,
-                "root_cause_alert_id": incident.root_cause_alert_id,
-                "confidence_score": incident.confidence_score,
-                "recommended_action": incident.recommended_action,
-                "hypothesis": incident.hypothesis,
-                "time_range_start": incident.time_range.get("start"),
-                "time_range_end": incident.time_range.get("end"),
-                "alert_ids": incident.alert_ids,
-                "techniques": incident.attack_techniques,
-                "entities": [
-                    {"type": k, "value": v}
-                    for k, vlist in incident.participating_entities.items()
-                    for v in vlist
-                ]
-            }
+renderer = IncidentGraphRenderer(height="520px")
+for incident, summary, cluster in zip(incidents, result["summaries"], result["clusters"]):
+    with st.expander(f"{incident.incident_id} — {len(incident.alert_ids)} alerts", expanded=True):
+        # Get detailed incident information from database if available
+        db_incident_details = get_db_incident_details(incident.incident_id)
 
-            # Get security guidance
-            security_guidance = get_security_guidance(incident_data)
+        # Use database details if available, otherwise fall back to incident object
+        incident_data = db_incident_details if db_incident_details else {
+            "incident_id": incident.incident_id,
+            "root_cause_alert_id": incident.root_cause_alert_id,
+            "confidence_score": incident.confidence_score,
+            "recommended_action": incident.recommended_action,
+            "hypothesis": incident.hypothesis,
+            "time_range_start": incident.time_range.get("start"),
+            "time_range_end": incident.time_range.get("end"),
+            "alert_ids": incident.alert_ids,
+            "techniques": incident.attack_techniques,
+            "entities": [
+                {"type": k, "value": v}
+                for k, vlist in incident.participating_entities.items()
+                for v in vlist
+            ]
+        }
 
-            # Get historical similar incidents
-            similar_incidents = get_historical_similarity(incident.incident_id)
+        # Get security guidance
+        security_guidance = get_security_guidance(incident_data)
 
-            # Display metrics
-            a, b, c = st.columns(3)
-            a.metric("Confidence", f"{incident_data['confidence_score']:.0%}")
-            b.markdown(f"**Likely root cause**  \n{incident_data['root_cause_alert_id'] or 'Unknown'}")
-            c.markdown(f"**Recommended response**  \n{incident_data['recommended_action']}")
+        # Get historical similar incidents
+        similar_incidents = get_historical_similarity(incident.incident_id)
 
-            # Display techniques
-            st.markdown(f"**Techniques:** {', '.join(incident_data['techniques']) or 'Not identified'}")
+        # Display metrics
+        a, b, c = st.columns(3)
+        a.metric("Confidence", f"{incident_data['confidence_score']:.0%}")
+        b.markdown(f"**Likely root cause**  \n{incident_data['root_cause_alert_id'] or 'Unknown'}")
+        c.markdown(f"**Recommended response**  \n{incident_data['recommended_action']}")
 
-            # Display alert details in a table
-            st.dataframe(summary["alerts"], width='stretch', hide_index=True)
+        # Display techniques
+        st.markdown(f"**Techniques:** {', '.join(incident_data['techniques']) or 'Not identified'}")
 
-            # Display historical similarity if available
-            if similar_incidents:
-                st.markdown("### 🔍 Historical Similarity")
-                st.info(f"Found {len(similar_incidents)} similar historical incident(s)")
-                for sim in similar_incidents:
-                    st.markdown(f"- **Incident {sim['incident_id']}** (confidence: {sim['confidence_score']:.0%}, {sim['similarity_basis']})")
-                    if st.button(f"View details for {sim['incident_id']}", key=f"view_{sim['incident_id']}"):
-                        # In a real app, we might navigate to a detailed view or show a modal
-                        st.info(f"Would show detailed view for incident {sim['incident_id']}")
+        # Display alert details in a table
+        st.dataframe(summary["alerts"], width='stretch', hide_index=True)
 
-            # Display security guidance
-            st.markdown("### 🛡️ Security Guidance")
-            guidance_col1, guidance_col2 = st.columns(2)
+        # Display historical similarity if available
+        if similar_incidents:
+            st.markdown("### 🔍 Historical Similarity")
+            st.info(f"Found {len(similar_incidents)} similar historical incident(s)")
+            for sim in similar_incidents:
+                st.markdown(f"- **Incident {sim['incident_id']}** (confidence: {sim['confidence_score']:.0%}, {sim['similarity_basis']})")
+                if st.button(f"View details for {sim['incident_id']}", key=f"view_{sim['incident_id']}"):
+                    # In a real app, we might navigate to a detailed view or show a modal
+                    st.info(f"Would show detailed view for incident {sim['incident_id']}")
 
-            with guidance_col1:
-                st.markdown("**✅ What to do**")
-                for action in security_guidance["do"]:
-                    st.markdown(f"• {action}")
+        # Display security guidance
+        st.markdown("### 🛡️ Security Guidance")
+        guidance_col1, guidance_col2 = st.columns(2)
 
-            with guidance_col2:
-                st.markdown("**❌ What not to do**")
-                for action in security_guidance["dont"]:
-                    st.markdown(f"• {action}")
+        with guidance_col1:
+            st.markdown("**✅ What to do**")
+            for action in security_guidance["do"]:
+                st.markdown(f"• {action}")
 
-            # Render the incident graph
-            graph_html = renderer.render_incident_graph(
-                result["graph"],
-                incident_nodes=cluster,
-                highlight_root_cause=incident.root_cause_alert_id,
-            )
-            if graph_html.lstrip().startswith("{"):
-                st.json(graph_html)
+        with guidance_col2:
+            st.markdown("**❌ What not to do**")
+            for action in security_guidance["dont"]:
+                st.markdown(f"• {action}")
+
+        # Render the incident graph
+        graph_html = renderer.render_incident_graph(
+            result["graph"],
+            incident_nodes=cluster,
+            highlight_root_cause=incident.root_cause_alert_id,
+        )
+        if graph_html.lstrip().startswith("{"):
+            st.json(graph_html)
+        else:
+            components.html(graph_html, height=540, scrolling=True)
+
+st.divider()
+st.subheader("🚨 Error‑injection demo")
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("💥 Inject a synthetic error"):
+        # Inject a few sample error lines
+        log_error(
+            "Traceback (most recent call last):\n  File \"demo.py\", line 13, in <module>\n  raise ValueError('demo failure')"
+        )
+            log_error("Failed to connect to upstream service: timeout after 30s")
+            log_error("Invalid token received from user alice@example.com")
+            st.success("Injected 3 error lines – press ▶️ Check for new errors to see the correlation.")
+    with col2:
+        if st.button("▶️ Check for new errors (manual)"):
+            err_res = process_error_lines(time_window, min_alerts)
+            if err_res is None:
+                st.info("No new error lines were found.")
             else:
-                components.html(graph_html, height=540, scrolling=True)
+                display_correlation_result(err_res)
+
+    # Optional: auto‑refresh every 4 seconds (uncomment if you installed streamlit‑autorefresh)
+    # from streamlit_autorefresh import st_autorefresh
+    # _ = st_autorefresh(interval=4000, limit=None, key="error_auto_refresh")
+    # if _:   # runs on each refresh after the first
+    #     err_res = process_error_lines(time_window, min_alerts)
+    #     if err_res:
+    #         st.subheader("🔴 Live error correlation (auto‑refresh)")
+    #         display_correlation_result(err_res)
 
 
 if __name__ == "__main__":
