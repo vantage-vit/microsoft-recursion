@@ -124,6 +124,22 @@ class AlertRepository:
             .all()
         )
 
+    @staticmethod
+    def get_alerts_by_ids(db: Session, alert_ids: List[str]) -> List[Alert]:
+        """
+        Get alerts by their IDs
+
+        Args:
+            db: Database session
+            alert_ids: List of alert IDs to retrieve
+
+        Returns:
+            List of Alert objects
+        """
+        if not alert_ids:
+            return []
+        return db.query(Alert).filter(Alert.alert_id.in_(alert_ids)).all()
+
 
 class IncidentRepository:
     """Repository for Incident operations"""
@@ -266,6 +282,22 @@ class IncidentRepository:
             .limit(limit)
             .all()
         )
+
+    @staticmethod
+    def get_incidents_by_ids(db: Session, incident_ids: List[str]) -> List[Incident]:
+        """
+        Get incidents by their IDs
+
+        Args:
+            db: Database session
+            incident_ids: List of incident IDs to retrieve
+
+        Returns:
+            List of Incident objects
+        """
+        if not incident_ids:
+            return []
+        return db.query(Incident).filter(Incident.incident_id.in_(incident_ids)).all()
 
 
 class MLFeatureRepository:

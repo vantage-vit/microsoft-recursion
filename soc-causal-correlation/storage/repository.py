@@ -139,6 +139,22 @@ class AlertRepository:
             .all()
         )
 
+    @staticmethod
+    def get_alerts_by_ids(db: Session, alert_ids: List[str]) -> List[Alert]:
+        """
+        Get alerts by their IDs
+
+        Args:
+            db: Database session
+            alert_ids: List of alert IDs to retrieve
+
+        Returns:
+            List of Alert objects
+        """
+        if not alert_ids:
+            return []
+        return db.query(Alert).filter(Alert.alert_id.in_(alert_ids)).all()
+
 
 class IncidentRepository:
     """Repository for Incident operations"""
